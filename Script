@@ -1,10 +1,16 @@
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
--- ==================== EXPLOIT TOGGLES ====================
+-- Safe LocalPlayer
+local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    task.wait(0.1)
+    LocalPlayer = Players.LocalPlayer
+end
+
+-- ==================== TOGGLES ====================
 local NoRecoilEnabled = false
 local NoSpreadEnabled = false
 local NoCameraShakeEnabled = false
@@ -12,7 +18,83 @@ local InfiniteAmmoEnabled = false
 local ZeroDelayEnabled = false
 local RapidFireEnabled = false
 local AllAutomaticEnabled = false
+local AutomaticFireRate = 0.1
+local InstantPromptsEnabled = false
+local InstantHitEnabled = false
 
+-- ==================== VISUALS (Fixed ESP) ====================
+local visuals = {}  -- player → {highlight1, highlight2, ...}
+
+local ChamsEnabled = false
+local BoxESPEnabled = false
+local ChamsFillTransparency = 0.5
+
+local EnemyChamsColor = Color3.fromRGB(255, 0, 0)
+local TeamChamsColor = Color3.fromRGB(0, 255, 0)
+local EnemyBoxColor = Color3.fromRGB(255, 0, 0)
+
+local function clearVisuals(player)
+    if visuals[player] then
+        for _, obj in pairs(visuals[player]) do
+            if obj and obj.Parent then
+                obj:Destroy()
+            end
+        end
+        visuals[player] = nil
+    end
+end
+
+local function updateVisualsForPlayer(player)
+    clearVisuals(player)
+    
+    local char = player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+
+    visuals[player] = {}
+
+    if ChamsEnabled or BoxESPEnabled then
+        local highlight = Instance.new("Highlight")
+        highlight.Adornee = char
+        highlight.FillTransparency = ChamsEnabled and ChamsFillTransparency or 1
+        highlight.OutlineTransparency = BoxESPEnabled and 0 or 1
+        highlight.FillColor = (player.Team == LocalPlayer.Team) and TeamChamsColor or EnemyChamsColor
+        highlight.OutlineColor = (player.Team == LocalPlayer.Team) and TeamChamsColor or EnemyBoxColor
+        highlight.Parent = char
+        table.insert(visuals[player], highlight)
+    end
+end
+
+local function setupVisuals()
+    -- Current players
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            updateVisualsForPlayer(player)
+        end
+    end
+
+    -- New players join
+    Players.PlayerAdded:Connect(function(player)
+        if player == LocalPlayer then return end
+        
+        -- When they spawn / respawn
+        player.CharacterAdded:Connect(function()
+            task.wait(0.4)  -- small delay so character is fully loaded
+            updateVisualsForPlayer(player)
+        end)
+        
+        -- When they die or leave
+        player.CharacterRemoving:Connect(function()
+            clearVisuals(player)
+        end)
+    end)
+
+    -- When someone leaves the game
+    Players.PlayerRemoving:Connect(function(player)
+        clearVisuals(player)
+    end)
+end
+
+-- ==================== OTHER FEATURES (unchanged) ====================
 local function modifyGunStats()
 	for _, obj in pairs(getgc(true)) do
 		if type(obj) == "table" and rawget(obj, "Spread") then
@@ -27,7 +109,7 @@ local function modifyGunStats()
 				if rawget(obj, "Intensity") then obj.Intensity = 0 end
 			end
 			if (ZeroDelayEnabled or RapidFireEnabled or AllAutomaticEnabled) and rawget(obj, "FireRate") then
-				obj.FireRate = 0
+				obj.FireRate = AllAutomaticEnabled and AutomaticFireRate or 0
 			end
 			if (RapidFireEnabled or AllAutomaticEnabled) and rawget(obj, "BurstRate") then
 				obj.BurstRate = 0
@@ -40,6 +122,9 @@ local function modifyGunStats()
 				if rawget(obj, "ReloadAnimationID") then obj.ReloadAnimationID = nil end
 				if rawget(obj, "ReloadAnimationSpeed") then obj.ReloadAnimationSpeed = 0 end
 				if rawget(obj, "AmmoPerClip") then obj.AmmoPerClip = 9999 end
+			end
+			if InstantHitEnabled and rawget(obj, "BulletSpeed") then
+				obj.BulletSpeed = 9999
 			end
 		end
 	end
@@ -102,149 +187,94 @@ local function findFireFunction()
 end
 findFireFunction()
 
--- Aggressive loop
+-- Background loops (Anti-Lag always ON)
 task.spawn(function()
 	while true do
-		task.wait(0.08)
+		task.wait(0.5)
 		modifyGunStats()
 		if LocalPlayer.Character then
 			for _, tool in pairs(LocalPlayer.Character:GetChildren()) do
-				if tool:IsA("Tool") then
-					if tool:FindFirstChild("Setting") then
-						local success, settings = pcall(require, tool.Setting)
-						if success and type(settings) == "table" then
-							if NoSpreadEnabled then
-								settings.Spread = 0
-								settings.VelocitySpreadDivisor = math.huge
-								settings.MaxVelocitySpreadBonus = 0
-							end
-							if NoCameraShakeEnabled then
-								settings.CameraShakingEnabled = false
-								settings.Intensity = 0
-							end
-							if (ZeroDelayEnabled or RapidFireEnabled or AllAutomaticEnabled) and settings.FireRate then
-								settings.FireRate = 0
-							end
-							if (RapidFireEnabled or AllAutomaticEnabled) and settings.BurstRate then
-								settings.BurstRate = 0
-							end
-							if AllAutomaticEnabled then
-								settings.Auto = true
-							end
-							if InfiniteAmmoEnabled then
-								settings.ReloadTime = 0
-								settings.ReloadAnimationID = nil
-								settings.ReloadAnimationSpeed = 0
-								settings.AmmoPerClip = 9999
-							end
+				if tool:IsA("Tool") and tool:FindFirstChild("Setting") then
+					local success, settings = pcall(require, tool.Setting)
+					if success and type(settings) == "table" then
+						-- gun settings code (same as before)
+						if NoSpreadEnabled then
+							settings.Spread = 0
+							settings.VelocitySpreadDivisor = math.huge
+							settings.MaxVelocitySpreadBonus = 0
+						end
+						if NoCameraShakeEnabled then
+							settings.CameraShakingEnabled = false
+							settings.Intensity = 0
+						end
+						if (ZeroDelayEnabled or RapidFireEnabled or AllAutomaticEnabled) and settings.FireRate then
+							settings.FireRate = AllAutomaticEnabled and AutomaticFireRate or 0
+						end
+						if (RapidFireEnabled or AllAutomaticEnabled) and settings.BurstRate then
+							settings.BurstRate = 0
+						end
+						if AllAutomaticEnabled then
+							settings.Auto = true
+						end
+						if InfiniteAmmoEnabled then
+							settings.ReloadTime = 0
+							settings.ReloadAnimationID = nil
+							settings.ReloadAnimationSpeed = 0
+							settings.AmmoPerClip = 9999
+						end
+						if InstantHitEnabled and settings.BulletSpeed then
+							settings.BulletSpeed = 9999
 						end
 					end
-					if InfiniteAmmoEnabled then
-						local ammo = tool:FindFirstChild("Ammo") or tool:FindFirstChildWhichIsA("NumberValue")
-						if ammo then
-							ammo.Value = 9999
-						end
-					end
+				end
+				if InfiniteAmmoEnabled then
+					local ammo = tool:FindFirstChild("Ammo") or tool:FindFirstChildWhichIsA("NumberValue")
+					if ammo then ammo.Value = 9999 end
 				end
 			end
 		end
 	end
 end)
 
--- ==================== CLEAN VISUALS (Chams + Box only) ====================
-local visuals = {}
-local ChamsEnabled = false
-local BoxESPEnabled = false
-local ChamsFillTransparency = 0.5
-
-local EnemyChamsColor = Color3.fromRGB(255, 0, 0)
-local TeamChamsColor = Color3.fromRGB(0, 255, 0)
-local EnemyBoxColor = Color3.fromRGB(255, 0, 0)
-
-local function clearVisuals(player)
-	if visuals[player] then
-		for _, v in pairs(visuals[player]) do
-			if v and v.Parent then v:Destroy() end
-		end
-		visuals[player] = nil
-	end
-end
-
-local function updateVisualsForPlayer(player)
-	clearVisuals(player)
-
-	local char = player.Character
-	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-
-	visuals[player] = {}
-
-	if ChamsEnabled or BoxESPEnabled then
-		local highlight = Instance.new("Highlight")
-		highlight.Adornee = char
-		highlight.FillTransparency = ChamsEnabled and ChamsFillTransparency or 1
-		highlight.OutlineTransparency = BoxESPEnabled and 0 or 1
-		highlight.FillColor = (player.Team == LocalPlayer.Team) and TeamChamsColor or EnemyChamsColor
-		highlight.OutlineColor = (player.Team == LocalPlayer.Team) and TeamChamsColor or EnemyBoxColor
-		highlight.Parent = char
-		table.insert(visuals[player], highlight)
-	end
-end
-
-local function setupVisuals()
-	for _, player in ipairs(Players:GetPlayers()) do
-		if player ~= LocalPlayer then
-			updateVisualsForPlayer(player)
+task.spawn(function()
+	while true do
+		task.wait(1)
+		if InstantPromptsEnabled then
+			for _, prompt in ipairs(workspace:GetDescendants()) do
+				if prompt:IsA("ProximityPrompt") and prompt.HoldDuration > 0 then
+					prompt.HoldDuration = 0
+				end
+			end
 		end
 	end
+end)
 
-	Players.PlayerAdded:Connect(function(player)
-		if player == LocalPlayer then return end
-		player.CharacterAdded:Connect(function()
-			task.wait(0.5)
-			updateVisualsForPlayer(player)
-		end)
-		player.CharacterRemoving:Connect(function()
-			clearVisuals(player)
-		end)
-	end)
-end
-
--- ==================== AIMBOT WITH KEYBINDS ====================
+-- ==================== AIMBOT ====================
 local AimbotEnabled = false
 local AimbotFOV = 100
 local AimbotSmoothness = 0.5
 local AimbotTargetPart = "Head"
-local AimbotKey = Enum.UserInputType.MouseButton2   -- Right Mouse Button by default
-
+local AimbotKey = Enum.UserInputType.MouseButton2
 local aiming = false
 
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
-	if input.UserInputType == AimbotKey then
-		aiming = true
-	end
+	if input.UserInputType == AimbotKey then aiming = true end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == AimbotKey then
-		aiming = false
-	end
+	if input.UserInputType == AimbotKey then aiming = false end
 end)
 
 local function getClosestTarget()
-	local closest = nil
-	local shortestDistance = AimbotFOV
-
+	local closest, shortest = nil, AimbotFOV
 	for _, player in ipairs(Players:GetPlayers()) do
 		if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild(AimbotTargetPart) then
-			local targetPart = player.Character[AimbotTargetPart]
-			local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+			local part = player.Character[AimbotTargetPart]
+			local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
 			if onScreen then
-				local distance = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
-				if distance < shortestDistance then
-					shortestDistance = distance
-					closest = targetPart
-				end
+				local dist = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
+				if dist < shortest then shortest = dist; closest = part end
 			end
 		end
 	end
@@ -253,22 +283,21 @@ end
 
 RunService.RenderStepped:Connect(function()
 	if not AimbotEnabled or not aiming then return end
-
 	local target = getClosestTarget()
 	if target then
 		local targetPos = Camera:WorldToScreenPoint(target.Position)
-		local currentMouse = UserInputService:GetMouseLocation()
-		local smoothX = currentMouse.X + (targetPos.X - currentMouse.X) * AimbotSmoothness
-		local smoothY = currentMouse.Y + (targetPos.Y - currentMouse.Y) * AimbotSmoothness
-		mousemoverel(smoothX - currentMouse.X, smoothY - currentMouse.Y)
+		local mouse = UserInputService:GetMouseLocation()
+		local smoothX = mouse.X + (targetPos.X - mouse.X) * AimbotSmoothness
+		local smoothY = mouse.Y + (targetPos.Y - mouse.Y) * AimbotSmoothness
+		mousemoverel(smoothX - mouse.X, smoothY - mouse.Y)
 	end
 end)
 
--- ==================== RAYFIELD UI WITH MULTIPLE TABS ====================
+-- ==================== RAYFIELD UI ====================
 local RayfieldLibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/bozo272666-collab/Rayfield-UI/refs/heads/main/UI"))()
 
 local Window = RayfieldLibrary:CreateWindow({
-	Name = "Nigger Loader",
+	Name = "Gun Exploit Hub",
 	LoadingTitle = "Loading...",
 	LoadingSubtitle = "by Bozo",
 	ConfigurationSaving = {
@@ -278,120 +307,64 @@ local Window = RayfieldLibrary:CreateWindow({
 	},
 })
 
--- Tab 1: Main
+Rayfield:Notify({
+   Title = "Discord:",
+   Content = "notbozo8",
+   Duration = 6.5,
+   Image = 4483362458,
+})
+
+-- Main Tab
 local MainTab = Window:CreateTab("Main", 4483362458)
 MainTab:CreateSection("Main Exploits")
 MainTab:CreateToggle({Name = "No Recoil", CurrentValue = false, Callback = function(v) NoRecoilEnabled = v end})
 MainTab:CreateToggle({Name = "No Spread (No Movement Spread)", CurrentValue = false, Callback = function(v) NoSpreadEnabled = v end})
 MainTab:CreateToggle({Name = "No Camera Shake", CurrentValue = false, Callback = function(v) NoCameraShakeEnabled = v end})
 
--- Tab 2: Gun Mods
+-- Gun Mods Tab
 local ModsTab = Window:CreateTab("Gun Mods", 4483362458)
 ModsTab:CreateSection("Gun Mods")
-ModsTab:CreateToggle({
-	Name = "Infinite Ammo (No Reload)",
-	CurrentValue = false,
-	Callback = function(v) InfiniteAmmoEnabled = v end,
-})
+ModsTab:CreateToggle({Name = "Infinite Ammo (No Reload)", CurrentValue = false, Callback = function(v) InfiniteAmmoEnabled = v end})
 ModsTab:CreateToggle({Name = "Zero Firing Delay", CurrentValue = false, Callback = function(v) ZeroDelayEnabled = v end})
 ModsTab:CreateToggle({Name = "Rapid Fire", CurrentValue = false, Callback = function(v) RapidFireEnabled = v end})
 ModsTab:CreateToggle({Name = "All Guns Automatic", CurrentValue = false, Callback = function(v) AllAutomaticEnabled = v end})
+ModsTab:CreateSlider({Name = "Automatic Fire Rate", Range = {0.01, 0.5}, Increment = 0.01, CurrentValue = 0.1, Callback = function(v) AutomaticFireRate = v end})
 
--- Tab 3: Visuals
+ModsTab:CreateSection("Bullet Mods")
+ModsTab:CreateToggle({Name = "Instant Hit", CurrentValue = false, Callback = function(v) InstantHitEnabled = v end})
+
+-- Visuals Tab
 local VisualsTab = Window:CreateTab("Visuals", 4483362458)
-
 VisualsTab:CreateSection("Visuals Toggles")
-VisualsTab:CreateToggle({
-	Name = "Chams",
-	CurrentValue = false,
-	Callback = function(v) 
-		ChamsEnabled = v 
-		setupVisuals() 
-	end,
-})
+VisualsTab:CreateToggle({Name = "Chams", CurrentValue = false, Callback = function(v) ChamsEnabled = v; setupVisuals() end})
+VisualsTab:CreateToggle({Name = "Box ESP", CurrentValue = false, Callback = function(v) BoxESPEnabled = v; setupVisuals() end})
 
-VisualsTab:CreateToggle({
-	Name = "Box ESP",
-	CurrentValue = false,
-	Callback = function(v) 
-		BoxESPEnabled = v 
-		setupVisuals() 
-	end,
-})
+VisualsTab:CreateSection("ESP Customization")
+VisualsTab:CreateSlider({Name = "Chams Fill Transparency", Range = {0, 1}, Increment = 0.05, CurrentValue = 0.5, Callback = function(v) ChamsFillTransparency = v; setupVisuals() end})
+VisualsTab:CreateSection("ESP Colors")
+VisualsTab:CreateColorPicker({Name = "Enemy Chams Color", Color = Color3.fromRGB(255, 0, 0), Callback = function(c) EnemyChamsColor = c; setupVisuals() end})
+VisualsTab:CreateColorPicker({Name = "Teammate Chams Color", Color = Color3.fromRGB(0, 255, 0), Callback = function(c) TeamChamsColor = c; setupVisuals() end})
+VisualsTab:CreateColorPicker({Name = "Enemy Box Color", Color = Color3.fromRGB(255, 0, 0), Callback = function(c) EnemyBoxColor = c; setupVisuals() end})
 
-VisualsTab:CreateSection("Visuals Customization")
-VisualsTab:CreateSlider({
-	Name = "Chams Fill Transparency",
-	Range = {0, 1},
-	Increment = 0.05,
-	CurrentValue = 0.5,
-	Callback = function(v) ChamsFillTransparency = v; setupVisuals() end,
-})
-
-VisualsTab:CreateSection("Colors")
-VisualsTab:CreateColorPicker({
-	Name = "Enemy Chams Color",
-	Color = Color3.fromRGB(255, 0, 0),
-	Callback = function(color) EnemyChamsColor = color; setupVisuals() end,
-})
-
-VisualsTab:CreateColorPicker({
-	Name = "Teammate Chams Color",
-	Color = Color3.fromRGB(0, 255, 0),
-	Callback = function(color) TeamChamsColor = color; setupVisuals() end,
-})
-
-VisualsTab:CreateColorPicker({
-	Name = "Enemy Box Color",
-	Color = Color3.fromRGB(255, 0, 0),
-	Callback = function(color) EnemyBoxColor = color; setupVisuals() end,
-})
-
--- Tab 4: Silent Aim
+-- Silent Aim Tab
 local SilentAimTab = Window:CreateTab("Silent Aim", 4483362458)
-SilentAimTab:CreateSection("Silent Aim")
--- Nothing added here yet
+SilentAimTab:CreateSection("WORK IN PROGRESS")
 
--- Tab 5: Aimbot with Keybinds
+-- Aimbot Tab
 local AimbotTab = Window:CreateTab("Aimbot", 4483362458)
-
 AimbotTab:CreateSection("Aimbot Settings")
-AimbotTab:CreateToggle({
-	Name = "Aimbot Enabled",
-	CurrentValue = false,
-	Callback = function(v) AimbotEnabled = v end,
-})
+AimbotTab:CreateToggle({Name = "Aimbot Enabled", CurrentValue = false, Callback = function(v) AimbotEnabled = v end})
+AimbotTab:CreateKeybind({Name = "Aimbot Key", CurrentKeybind = "MouseButton2", Callback = function() end})
+AimbotTab:CreateSlider({Name = "Aimbot FOV", Range = {10, 500}, Increment = 10, CurrentValue = 100, Callback = function(v) AimbotFOV = v end})
+AimbotTab:CreateSlider({Name = "Smoothness", Range = {0.1, 1}, Increment = 0.05, CurrentValue = 0.5, Callback = function(v) AimbotSmoothness = v end})
+AimbotTab:CreateDropdown({Name = "Target Part", Options = {"Head", "HumanoidRootPart", "Torso"}, CurrentOption = {"Head"}, Callback = function(opt) AimbotTargetPart = opt[1] end})
 
-AimbotTab:CreateKeybind({
-	Name = "Aimbot Key",
-	CurrentKeybind = "MouseButton2",
-	Callback = function() end,
-})
-
-AimbotTab:CreateSlider({
-	Name = "Aimbot FOV",
-	Range = {10, 500},
-	Increment = 10,
-	CurrentValue = 100,
-	Callback = function(v) AimbotFOV = v end,
-})
-
-AimbotTab:CreateSlider({
-	Name = "Smoothness",
-	Range = {0.1, 1},
-	Increment = 0.05,
-	CurrentValue = 0.5,
-	Callback = function(v) AimbotSmoothness = v end,
-})
-
-AimbotTab:CreateDropdown({
-	Name = "Target Part",
-	Options = {"Head", "HumanoidRootPart", "Torso"},
-	CurrentOption = {"Head"},
-	Callback = function(option) AimbotTargetPart = option[1] end,
-})
+-- Misc Tab
+local MiscTab = Window:CreateTab("Misc", 4483362458)
+MiscTab:CreateSection("Misc Features")
+MiscTab:CreateToggle({Name = "Instant Prompts", CurrentValue = false, Callback = function(v) InstantPromptsEnabled = v end})
 
 RayfieldLibrary:LoadConfiguration()
 
--- Start visuals
+-- Start ESP system
 setupVisuals()
