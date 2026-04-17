@@ -3,7 +3,7 @@ local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
--- Safe LocalPlayer
+-- Safe LocalPlayer (fixes your error)
 local LocalPlayer = Players.LocalPlayer
 while not LocalPlayer do
     task.wait(0.1)
@@ -20,81 +20,18 @@ local RapidFireEnabled = false
 local AllAutomaticEnabled = false
 local AutomaticFireRate = 0.1
 local InstantPromptsEnabled = false
+
+local SilentAimEnabled = false
+local SilentAimFOV = 120
 local InstantHitEnabled = false
 
--- ==================== VISUALS (Fixed ESP) ====================
-local visuals = {}  -- player → {highlight1, highlight2, ...}
+-- Tracer Customization
+local TracersEnabled = false
+local TracerColor = Color3.fromRGB(255, 255, 0)
+local TracerThickness = 0.15
+local TracerTransparency = 0.4
+local TracerDuration = 0.6
 
-local ChamsEnabled = false
-local BoxESPEnabled = false
-local ChamsFillTransparency = 0.5
-
-local EnemyChamsColor = Color3.fromRGB(255, 0, 0)
-local TeamChamsColor = Color3.fromRGB(0, 255, 0)
-local EnemyBoxColor = Color3.fromRGB(255, 0, 0)
-
-local function clearVisuals(player)
-    if visuals[player] then
-        for _, obj in pairs(visuals[player]) do
-            if obj and obj.Parent then
-                obj:Destroy()
-            end
-        end
-        visuals[player] = nil
-    end
-end
-
-local function updateVisualsForPlayer(player)
-    clearVisuals(player)
-    
-    local char = player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-
-    visuals[player] = {}
-
-    if ChamsEnabled or BoxESPEnabled then
-        local highlight = Instance.new("Highlight")
-        highlight.Adornee = char
-        highlight.FillTransparency = ChamsEnabled and ChamsFillTransparency or 1
-        highlight.OutlineTransparency = BoxESPEnabled and 0 or 1
-        highlight.FillColor = (player.Team == LocalPlayer.Team) and TeamChamsColor or EnemyChamsColor
-        highlight.OutlineColor = (player.Team == LocalPlayer.Team) and TeamChamsColor or EnemyBoxColor
-        highlight.Parent = char
-        table.insert(visuals[player], highlight)
-    end
-end
-
-local function setupVisuals()
-    -- Current players
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            updateVisualsForPlayer(player)
-        end
-    end
-
-    -- New players join
-    Players.PlayerAdded:Connect(function(player)
-        if player == LocalPlayer then return end
-        
-        -- When they spawn / respawn
-        player.CharacterAdded:Connect(function()
-            task.wait(0.4)  -- small delay so character is fully loaded
-            updateVisualsForPlayer(player)
-        end)
-        
-        -- When they die or leave
-        player.CharacterRemoving:Connect(function()
-            clearVisuals(player)
-        end)
-    end)
-
-    -- When someone leaves the game
-    Players.PlayerRemoving:Connect(function(player)
-        clearVisuals(player)
-    end)
-end
-
--- ==================== OTHER FEATURES (unchanged) ====================
 local function modifyGunStats()
 	for _, obj in pairs(getgc(true)) do
 		if type(obj) == "table" and rawget(obj, "Spread") then
@@ -130,7 +67,7 @@ local function modifyGunStats()
 	end
 end
 
--- Raycast Hook
+-- Raycast Hook (Silent Aim + Tracers)
 local oldRayCast
 for _, v in pairs(getgc(true)) do
 	if type(v) == "function" and debug.getinfo(v).name == "RayCast" then
@@ -140,8 +77,43 @@ for _, v in pairs(getgc(true)) do
 end
 if oldRayCast then
 	local function newRayCast(origin, direction, distance, ignore)
-		if NoSpreadEnabled then
-			local hitPosition = origin + direction.Unit * distance
+		if SilentAimEnabled then
+			local closest = nil
+			local shortest = SilentAimFOV
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("Head") then
+					local screenPos, onScreen = Camera:WorldToViewportPoint(plr.Character.Head.Position)
+					if onScreen then
+						local dist = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
+						if dist < shortest then
+							shortest = dist
+							closest = plr.Character.Head
+						end
+					end
+				end
+			end
+			if closest then
+				direction = (closest.Position - origin).Unit
+			end
+		end
+
+		local hitPosition = origin + direction.Unit * distance
+
+		-- Custom Tracers
+		if TracersEnabled then
+			local tracer = Instance.new("Part")
+			tracer.Anchored = true
+			tracer.CanCollide = false
+			tracer.Transparency = TracerTransparency
+			tracer.Color = TracerColor
+			tracer.Material = Enum.Material.Neon
+			tracer.Size = Vector3.new(TracerThickness, TracerThickness, (hitPosition - origin).Magnitude)
+			tracer.CFrame = CFrame.new(origin, hitPosition) * CFrame.new(0, 0, -tracer.Size.Z/2)
+			tracer.Parent = workspace
+			game.Debris:AddItem(tracer, TracerDuration)
+		end
+
+		if NoSpreadEnabled or SilentAimEnabled then
 			local fakeHit = Instance.new("Part")
 			fakeHit.Transparency = 1
 			fakeHit.CanCollide = false
@@ -149,6 +121,7 @@ if oldRayCast then
 			fakeHit.Position = hitPosition
 			return fakeHit, hitPosition
 		end
+
 		return oldRayCast(origin, direction, distance, ignore)
 	end
 	hookfunction(oldRayCast, newRayCast)
@@ -187,7 +160,7 @@ local function findFireFunction()
 end
 findFireFunction()
 
--- Background loops (Anti-Lag always ON)
+-- Aggressive loop (Anti-Lag always ON)
 task.spawn(function()
 	while true do
 		task.wait(0.5)
@@ -197,7 +170,7 @@ task.spawn(function()
 				if tool:IsA("Tool") and tool:FindFirstChild("Setting") then
 					local success, settings = pcall(require, tool.Setting)
 					if success and type(settings) == "table" then
-						-- gun settings code (same as before)
+						-- (same gun mod code as before)
 						if NoSpreadEnabled then
 							settings.Spread = 0
 							settings.VelocitySpreadDivisor = math.huge
@@ -236,6 +209,7 @@ task.spawn(function()
 	end
 end)
 
+-- Instant Prompts loop
 task.spawn(function()
 	while true do
 		task.wait(1)
@@ -249,6 +223,51 @@ task.spawn(function()
 	end
 end)
 
+-- ==================== VISUALS ====================
+local visuals = {}
+local ChamsEnabled = false
+local BoxESPEnabled = false
+local ChamsFillTransparency = 0.5
+
+local EnemyChamsColor = Color3.fromRGB(255, 0, 0)
+local TeamChamsColor = Color3.fromRGB(0, 255, 0)
+local EnemyBoxColor = Color3.fromRGB(255, 0, 0)
+
+local function clearVisuals(player)
+	if visuals[player] then
+		for _, v in pairs(visuals[player]) do if v and v.Parent then v:Destroy() end end
+		visuals[player] = nil
+	end
+end
+
+local function updateVisualsForPlayer(player)
+	clearVisuals(player)
+	local char = player.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+	visuals[player] = {}
+	if ChamsEnabled or BoxESPEnabled then
+		local highlight = Instance.new("Highlight")
+		highlight.Adornee = char
+		highlight.FillTransparency = ChamsEnabled and ChamsFillTransparency or 1
+		highlight.OutlineTransparency = BoxESPEnabled and 0 or 1
+		highlight.FillColor = (player.Team == LocalPlayer.Team) and TeamChamsColor or EnemyChamsColor
+		highlight.OutlineColor = (player.Team == LocalPlayer.Team) and TeamChamsColor or EnemyBoxColor
+		highlight.Parent = char
+		table.insert(visuals[player], highlight)
+	end
+end
+
+local function setupVisuals()
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then updateVisualsForPlayer(player) end
+	end
+	Players.PlayerAdded:Connect(function(player)
+		if player == LocalPlayer then return end
+		player.CharacterAdded:Connect(function() task.wait(0.5) updateVisualsForPlayer(player) end)
+		player.CharacterRemoving:Connect(function() clearVisuals(player) end)
+	end)
+end
+
 -- ==================== AIMBOT ====================
 local AimbotEnabled = false
 local AimbotFOV = 100
@@ -261,7 +280,6 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
 	if input.UserInputType == AimbotKey then aiming = true end
 end)
-
 UserInputService.InputEnded:Connect(function(input)
 	if input.UserInputType == AimbotKey then aiming = false end
 end)
@@ -300,11 +318,7 @@ local Window = RayfieldLibrary:CreateWindow({
 	Name = "Gun Exploit Hub",
 	LoadingTitle = "Loading...",
 	LoadingSubtitle = "by Bozo",
-	ConfigurationSaving = {
-		Enabled = true,
-		FolderName = "RayfieldExploit",
-		FileName = "GunSettings"
-	},
+	ConfigurationSaving = {Enabled = true, FolderName = "RayfieldExploit", FileName = "GunSettings"}
 })
 
 -- Main Tab
@@ -326,11 +340,18 @@ ModsTab:CreateSlider({Name = "Automatic Fire Rate", Range = {0.01, 0.5}, Increme
 ModsTab:CreateSection("Bullet Mods")
 ModsTab:CreateToggle({Name = "Instant Hit", CurrentValue = false, Callback = function(v) InstantHitEnabled = v end})
 
--- Visuals Tab
+-- Visuals Tab (Fully Custom Tracers)
 local VisualsTab = Window:CreateTab("Visuals", 4483362458)
 VisualsTab:CreateSection("Visuals Toggles")
 VisualsTab:CreateToggle({Name = "Chams", CurrentValue = false, Callback = function(v) ChamsEnabled = v; setupVisuals() end})
 VisualsTab:CreateToggle({Name = "Box ESP", CurrentValue = false, Callback = function(v) BoxESPEnabled = v; setupVisuals() end})
+
+VisualsTab:CreateSection("Bullet Tracers (Customizable)")
+VisualsTab:CreateToggle({Name = "Enable Tracers", CurrentValue = false, Callback = function(v) TracersEnabled = v end})
+VisualsTab:CreateColorPicker({Name = "Tracer Color", Color = Color3.fromRGB(255, 255, 0), Callback = function(c) TracerColor = c end})
+VisualsTab:CreateSlider({Name = "Tracer Thickness", Range = {0.05, 0.5}, Increment = 0.05, CurrentValue = 0.15, Callback = function(v) TracerThickness = v end})
+VisualsTab:CreateSlider({Name = "Tracer Transparency", Range = {0, 1}, Increment = 0.1, CurrentValue = 0.4, Callback = function(v) TracerTransparency = v end})
+VisualsTab:CreateSlider({Name = "Tracer Duration", Range = {0.2, 2}, Increment = 0.1, CurrentValue = 0.6, Callback = function(v) TracerDuration = v end})
 
 VisualsTab:CreateSection("ESP Customization")
 VisualsTab:CreateSlider({Name = "Chams Fill Transparency", Range = {0, 1}, Increment = 0.05, CurrentValue = 0.5, Callback = function(v) ChamsFillTransparency = v; setupVisuals() end})
@@ -341,7 +362,9 @@ VisualsTab:CreateColorPicker({Name = "Enemy Box Color", Color = Color3.fromRGB(2
 
 -- Silent Aim Tab
 local SilentAimTab = Window:CreateTab("Silent Aim", 4483362458)
-SilentAimTab:CreateSection("WORK IN PROGRESS")
+SilentAimTab:CreateSection("Silent Aim")
+SilentAimTab:CreateToggle({Name = "Silent Aim Enabled", CurrentValue = false, Callback = function(v) SilentAimEnabled = v end})
+SilentAimTab:CreateSlider({Name = "Silent Aim FOV", Range = {30, 300}, Increment = 10, CurrentValue = 120, Callback = function(v) SilentAimFOV = v end})
 
 -- Aimbot Tab
 local AimbotTab = Window:CreateTab("Aimbot", 4483362458)
@@ -358,6 +381,4 @@ MiscTab:CreateSection("Misc Features")
 MiscTab:CreateToggle({Name = "Instant Prompts", CurrentValue = false, Callback = function(v) InstantPromptsEnabled = v end})
 
 RayfieldLibrary:LoadConfiguration()
-
--- Start ESP system
 setupVisuals()
