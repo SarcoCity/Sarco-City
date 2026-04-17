@@ -307,13 +307,6 @@ local Window = RayfieldLibrary:CreateWindow({
 	},
 })
 
-Rayfield:Notify({
-   Title = "Discord:",
-   Content = "notbozo8",
-   Duration = 6.5,
-   Image = 4483362458,
-})
-
 -- Main Tab
 local MainTab = Window:CreateTab("Main", 4483362458)
 MainTab:CreateSection("Main Exploits")
