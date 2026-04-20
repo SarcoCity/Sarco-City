@@ -1,5 +1,3 @@
--- Gun Exploit Hub - Full Script (ESP Callback Error Fixed)
-
 local Players = game:GetService("Players")
 local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
@@ -460,5 +458,3 @@ pcall(function()
 end)
 
 setupVisuals()
-
-print("✅ Full script loaded - ESP Callback Error FIXED")
